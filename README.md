@@ -55,3 +55,33 @@ completion:
 checkpoint stores the model state, optimizer state, architecture, class count, epoch, and
 validation metrics. Docker and Kubernetes can override these relative paths with
 `/app/data` and `/app/checkpoints` when those directories are mounted.
+
+## Build and run the training image
+
+The training image uses a multi-stage build and installs the pinned dependencies from
+`requirements/train.txt`. The dataset and checkpoint directories are mounted at runtime,
+so they are not stored in the image:
+
+```bash
+docker build -f docker/Dockerfile.train -t mlops-train:v1 .
+
+docker run --rm \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/checkpoints:/app/checkpoints" \
+  mlops-train:v1
+```
+
+The image reads `/app/configs/training_config.yaml` by default. To use another
+configuration without rebuilding the image, mount it and pass its path:
+
+```bash
+docker run --rm \
+  -v "$(pwd)/configs:/app/configs:ro" \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/checkpoints:/app/checkpoints" \
+  mlops-train:v1 \
+  --config /app/configs/training_config.yaml
+```
+
+Training logs are emitted to the container's standard output and the best checkpoint is
+written to the mounted `checkpoints/` directory.

@@ -1,0 +1,29 @@
+# Dependency stage: install the pinned training stack separately so dependency
+# installation can be cached independently from application code.
+FROM python:3.11-slim AS dependencies
+
+WORKDIR /app
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1
+
+COPY requirements/train.txt ./requirements/train.txt
+RUN python -m pip install --no-cache-dir -r requirements/train.txt
+
+# Runtime stage: copy only the installed runtime dependencies and application
+# files needed to execute training.
+FROM python:3.11-slim AS training
+
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    TRAINING_CONFIG=/app/configs/training_config.yaml
+
+COPY --from=dependencies /usr/local/lib/python3.11/site-packages/ \
+    /usr/local/lib/python3.11/site-packages/
+COPY --from=dependencies /usr/local/bin/ \
+    /usr/local/bin/
+
+COPY src/ ./src/
+COPY configs/ ./configs/
+
+ENTRYPOINT ["python", "src/train.py"]
