@@ -1,0 +1,26 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    MODEL_CHECKPOINT=/app/checkpoints/classifier_v1.pt
+
+COPY requirements/serve.txt ./requirements/serve.txt
+RUN python -m pip install --no-cache-dir -r requirements/serve.txt \
+    && useradd --create-home --uid 10001 --shell /usr/sbin/nologin appuser \
+    && mkdir -p /app/checkpoints \
+    && chown -R appuser:appuser /app
+
+COPY src/model.py src/dataset.py src/serve.py ./src/
+RUN chown -R appuser:appuser /app/src
+
+USER appuser
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)" \
+    || exit 1
+
+CMD ["uvicorn", "src.serve:app", "--host", "0.0.0.0", "--port", "8080"]

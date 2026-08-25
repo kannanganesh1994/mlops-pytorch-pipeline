@@ -14,7 +14,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements/train.txt
-python -m pip install pytest==8.2.2
+python -m pip install -r requirements/serve.txt
+python -m pip install pytest==8.2.2 httpx==0.27.0
 ```
 
 ### Run tests
@@ -85,3 +86,28 @@ docker run --rm \
 
 Training logs are emitted to the container's standard output and the best checkpoint is
 written to the mounted `checkpoints/` directory.
+
+## Build and run the serving image
+
+The serving image installs only inference dependencies, runs as the non-root `appuser`,
+listens on port 8080, and checks `/health` through its Docker `HEALTHCHECK`. The trained
+checkpoint is mounted read-only at runtime:
+
+```bash
+docker build -f docker/Dockerfile.serve -t mlops-serve:v1 .
+
+docker run --rm -p 8080:8080 \
+  -v "$(pwd)/checkpoints:/app/checkpoints:ro" \
+  mlops-serve:v1
+```
+
+In another terminal, check the health and prediction endpoints:
+
+```bash
+curl -i http://localhost:8080/health
+curl -X POST http://localhost:8080/predict \
+  -F "image=@test_image.png"
+```
+
+The prediction response contains the selected class and one probability for each of the
+10 CIFAR-10 classes. The checkpoint must exist before starting the serving container.
