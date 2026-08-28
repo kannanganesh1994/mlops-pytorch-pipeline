@@ -113,7 +113,8 @@ async def predict(image: UploadFile = File(...)) -> dict[str, object]:
             detail="The uploaded file is not a valid image",
         ) from exc
 
-    inputs = get_transforms(train=False)(input_image).unsqueeze(0).to(DEVICE)
+    device = next(MODEL.parameters()).device
+    inputs = get_transforms(train=False)(input_image).unsqueeze(0).to(device)
     with torch.no_grad():
         probabilities = torch.softmax(MODEL(inputs), dim=1)[0]
 
