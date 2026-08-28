@@ -87,6 +87,27 @@ docker run --rm \
 Training logs are emitted to the container's standard output and the best checkpoint is
 written to the mounted `checkpoints/` directory.
 
+## Kubernetes configuration
+
+Commit 6 provides the namespace and non-secret training configuration resources:
+
+```bash
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/configmap.yaml
+```
+
+The CI workflow validates both manifests and the embedded configuration offline:
+
+```bash
+python -m pytest -q tests/test_k8s_manifests.py
+```
+
+The ConfigMap projects `training_config.yaml` into `/app/configs` for the training
+workload and uses `/app/data` and `/app/checkpoints` for mounted runtime storage. PVC
+definitions and their storage class are intentionally deferred to the Kubernetes training
+Job manifest because storage class names differ between clusters. The target cluster
+must provide data and checkpoint PVCs before the training Job is applied.
+
 ## Build and run the serving image
 
 The serving image installs only inference dependencies, runs as the non-root `appuser`,
