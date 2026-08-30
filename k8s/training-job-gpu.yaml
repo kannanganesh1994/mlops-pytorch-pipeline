@@ -1,0 +1,57 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cifar10-training-gpu-v1
+  namespace: ml-training
+  labels:
+    app.kubernetes.io/name: cifar10-training
+    app.kubernetes.io/component: gpu
+    app.kubernetes.io/part-of: mlops-pytorch-pipeline
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 7200
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cifar10-training
+        app.kubernetes.io/component: gpu
+        app.kubernetes.io/part-of: mlops-pytorch-pipeline
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        accelerator: nvidia-gpu
+      containers:
+        - name: trainer
+          image: mlops-train:v1
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config
+            - /app/configs/training_config.yaml
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "2"
+              memory: 4Gi
+              nvidia.com/gpu: "1"
+          volumeMounts:
+            - name: training-config
+              mountPath: /app/configs
+              readOnly: true
+            - name: cifar10-data
+              mountPath: /app/data
+            - name: model-checkpoints
+              mountPath: /app/checkpoints
+      volumes:
+        - name: training-config
+          configMap:
+            name: training-config
+        - name: cifar10-data
+          persistentVolumeClaim:
+            claimName: cifar10-data
+        - name: model-checkpoints
+          persistentVolumeClaim:
+            claimName: model-checkpoints
