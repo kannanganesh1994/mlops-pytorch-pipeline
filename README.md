@@ -87,6 +87,78 @@ docker run --rm \
 Training logs are emitted to the container's standard output and the best checkpoint is
 written to the mounted `checkpoints/` directory.
 
+## Kubernetes configuration
+
+Commit 6 provides the namespace and non-secret training configuration resources:
+
+```bash
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/configmap.yaml
+```
+
+The CI workflow validates both manifests and the embedded configuration offline:
+
+```bash
+python -m pytest -q tests/test_k8s_manifests.py
+```
+
+The ConfigMap projects `training_config.yaml` into `/app/configs` for the training
+workload and uses `/app/data` and `/app/checkpoints` for mounted runtime storage. PVC
+definitions are provided in `k8s/pvc.yaml` and omit `storageClassName`, allowing the
+cluster's default StorageClass to be used. If the target cluster has no default
+StorageClass, set the appropriate cluster-specific value before applying the PVCs.
+
+## Run the Kubernetes training Job
+
+Build `mlops-train:v1` and make it available to the target cluster. For Minikube, build
+inside Minikube's Docker environment:
+
+```bash
+eval "$(minikube docker-env)"
+docker build -f docker/Dockerfile.train -t mlops-train:v1 .
+```
+
+For kind, load a locally built image into the cluster:
+
+```bash
+docker build -f docker/Dockerfile.train -t mlops-train:v1 .
+kind load docker-image mlops-train:v1
+```
+
+For a remote cluster, push the image to an accessible registry and replace
+`mlops-train:v1` in `k8s/training-job.yaml` with its fully qualified image name.
+
+Apply the resources in dependency order:
+
+```bash
+kubectl apply -f k8s/namespace.yaml
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/pvc.yaml
+kubectl apply -f k8s/training-job.yaml
+```
+
+The Job is intentionally versioned because Kubernetes Job names cannot be recreated
+unchanged after completion. To rerun this version:
+
+```bash
+kubectl delete job/cifar10-training-v1 -n ml-training --ignore-not-found
+kubectl apply -f k8s/training-job.yaml
+```
+
+Monitor completion and inspect the structured training output:
+
+```bash
+kubectl get pvc,jobs,pods -n ml-training -o wide
+kubectl wait --for=condition=complete job/cifar10-training-v1 \
+  -n ml-training --timeout=30m
+kubectl logs job/cifar10-training-v1 -n ml-training
+kubectl describe job/cifar10-training-v1 -n ml-training
+```
+
+The Job downloads CIFAR-10 into the data PVC and writes
+`/app/checkpoints/classifier_v1.pt` to the checkpoint PVC. The serving Deployment in the
+next commit reuses that checkpoint PVC.
+
 ## Build and run the serving image
 
 The serving image installs only inference dependencies, runs as the non-root `appuser`,
