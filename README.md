@@ -159,6 +159,19 @@ The Job downloads CIFAR-10 into the data PVC and writes
 `/app/checkpoints/classifier_v1.pt` to the checkpoint PVC. The serving Deployment in the
 next commit reuses that checkpoint PVC.
 
+GPU training is optional. Use `k8s/training-job-gpu.yaml` only on a cluster with the
+NVIDIA device plugin and nodes labeled `accelerator=nvidia-gpu`:
+
+```bash
+kubectl apply -f k8s/training-job-gpu.yaml
+kubectl wait --for=condition=complete job/cifar10-training-gpu-v1 \
+  -n ml-training --timeout=30m
+```
+
+The default CPU Job does not request a GPU. The GPU manifest requests
+`nvidia.com/gpu: "1"` and is kept separate so ordinary CPU-only clusters can run the
+default workflow.
+
 ## Build and run the serving image
 
 The serving image installs only inference dependencies, runs as the non-root `appuser`,
@@ -183,3 +196,32 @@ curl -X POST http://localhost:8080/predict \
 
 The prediction response contains the selected class and one probability for each of the
 10 CIFAR-10 classes. The checkpoint must exist before starting the serving container.
+
+## Deploy the Kubernetes serving layer
+
+Apply the serving resources after the training Job has completed and the checkpoint PVC
+contains `classifier_v1.pt`:
+
+```bash
+kubectl apply -f k8s/serving-deployment.yaml
+kubectl apply -f k8s/serving-service.yaml
+kubectl rollout status deployment/model-serving -n ml-training
+kubectl get deployment,pods,svc -n ml-training
+kubectl get endpoints model-serving -n ml-training
+```
+
+The Deployment runs two replicas, mounts the checkpoint PVC read-only, and uses
+`/health` for both liveness and readiness. The Service is an internal ClusterIP on port
+80 and forwards to the serving container on port 8080.
+
+The HPA is optional and requires Metrics Server:
+
+```bash
+kubectl get apiservice v1beta1.metrics.k8s.io
+kubectl apply -f k8s/hpa.yaml
+kubectl get hpa model-serving -n ml-training
+```
+
+The HPA targets 70% average CPU utilization and scales between two and four replicas.
+If Metrics Server is unavailable, do not apply the HPA or claim that autoscaling has
+been verified.
