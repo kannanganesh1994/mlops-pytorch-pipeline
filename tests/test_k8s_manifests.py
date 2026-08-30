@@ -105,3 +105,95 @@ def test_training_job_mounts_config_and_persistent_storage():
         volumes["model-checkpoints"]["persistentVolumeClaim"]["claimName"]
         == "model-checkpoints"
     )
+
+
+def test_gpu_training_job_is_opt_in_and_requests_gpu():
+    manifest = load_manifest("training-job-gpu.yaml")
+    pod_spec = manifest["spec"]["template"]["spec"]
+    container = pod_spec["containers"][0]
+    resources = container["resources"]
+
+    assert manifest["metadata"]["name"] == "cifar10-training-gpu-v1"
+    assert pod_spec["nodeSelector"] == {"accelerator": "nvidia-gpu"}
+    assert resources["requests"]["nvidia.com/gpu"] == "1"
+    assert resources["limits"]["nvidia.com/gpu"] == "1"
+
+
+def test_serving_deployment_has_two_replicas_and_read_only_checkpoint():
+    manifest = load_manifest("serving-deployment.yaml")
+    pod_spec = manifest["spec"]["template"]["spec"]
+    container = pod_spec["containers"][0]
+
+    assert manifest["metadata"]["name"] == "model-serving"
+    assert manifest["spec"]["replicas"] == 2
+    assert manifest["spec"]["strategy"]["rollingUpdate"] == {
+        "maxSurge": 1,
+        "maxUnavailable": 0,
+    }
+    assert container["ports"] == [
+        {"name": "http", "containerPort": 8080, "protocol": "TCP"}
+    ]
+    assert container["env"] == [
+        {
+            "name": "MODEL_CHECKPOINT",
+            "value": "/app/checkpoints/classifier_v1.pt",
+        }
+    ]
+    assert container["resources"] == {
+        "requests": {"cpu": "500m", "memory": "1Gi"},
+        "limits": {"cpu": "1", "memory": "2Gi"},
+    }
+
+    liveness = container["livenessProbe"]
+    assert liveness["httpGet"] == {"path": "/health", "port": "http"}
+    assert liveness["periodSeconds"] == 10
+    assert liveness["failureThreshold"] == 3
+
+    readiness = container["readinessProbe"]
+    assert readiness["httpGet"] == {"path": "/health", "port": "http"}
+    assert readiness["initialDelaySeconds"] == 15
+    assert readiness["periodSeconds"] == 5
+
+    checkpoint_mount = next(
+        mount
+        for mount in container["volumeMounts"]
+        if mount["name"] == "model-checkpoints"
+    )
+    assert checkpoint_mount == {
+        "name": "model-checkpoints",
+        "mountPath": "/app/checkpoints",
+        "readOnly": True,
+    }
+
+
+def test_serving_service_is_cluster_ip_on_port_80():
+    manifest = load_manifest("serving-service.yaml")
+
+    assert manifest["metadata"]["name"] == "model-serving"
+    assert manifest["spec"]["type"] == "ClusterIP"
+    assert manifest["spec"]["selector"] == {"app.kubernetes.io/name": "model-serving"}
+    assert manifest["spec"]["ports"] == [
+        {
+            "name": "http",
+            "port": 80,
+            "targetPort": "http",
+            "protocol": "TCP",
+        }
+    ]
+
+
+def test_hpa_targets_serving_deployment():
+    manifest = load_manifest("hpa.yaml")
+
+    assert manifest["apiVersion"] == "autoscaling/v2"
+    assert manifest["spec"]["scaleTargetRef"] == {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "name": "model-serving",
+    }
+    assert manifest["spec"]["minReplicas"] == 2
+    assert manifest["spec"]["maxReplicas"] == 4
+    assert manifest["spec"]["metrics"][0]["resource"] == {
+        "name": "cpu",
+        "target": {"type": "Utilization", "averageUtilization": 70},
+    }
